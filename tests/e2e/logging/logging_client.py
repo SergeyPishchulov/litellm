@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from e2e_config import POLL_INTERVAL, POLL_TIMEOUT
 from e2e_gateway import Gateway, build_gateway
@@ -136,12 +136,10 @@ class LangfuseObservationList(BaseModel):
 
 
 class LangfuseListParams(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
     limit: int = 100
-    trace_id: str | None = Field(default=None, alias="traceId")
+    trace_id: str | None = Field(default=None, serialization_alias="traceId")
     name: str | None = None
-    from_start_time: str | None = Field(default=None, alias="fromStartTime")
+    from_start_time: str | None = Field(default=None, serialization_alias="fromStartTime")
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,18 +198,21 @@ def costs_agree(expected: float, actual: float, *, rel_tol: float = 0.05) -> boo
     return abs(expected - actual) <= max(1e-9, abs(expected) * rel_tol)
 
 
+class _CompletionIdBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str | None = None
+
+
 def completion_response_id(body: str) -> str | None:
     """SpendLogs.request_id is the chat completion body id, not x-litellm-call-id."""
     if not body or body == "<streamed>":
         return None
     try:
-        parsed = json.loads(body)
-    except json.JSONDecodeError:
+        parsed = _CompletionIdBody.model_validate_json(body)
+    except ValidationError:
         return None
-    if not isinstance(parsed, dict):
-        return None
-    raw = parsed.get("id")
-    return raw if isinstance(raw, str) and raw else None
+    return parsed.id or None
 
 
 def _matches_run(obs: LangfuseObservation, *, key_alias: str, prompt_marker: str) -> bool:
